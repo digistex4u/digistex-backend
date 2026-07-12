@@ -106,6 +106,29 @@ http.createServer(async (req, res) => {
       const token=await S.getAccessToken(client);
       return json(res, 200, await doPull(client, token, type, days));
     }
+    if (path === '/export' || path === '/export.csv' || path === '/api/export') {
+      // Live Google Ads offline-conversion feed for Google Ads Scheduled Uploads (HTTPS source).
+      if (process.env.EXPORT_KEY && q.get('key') !== process.env.EXPORT_KEY) { res.writeHead(401); return res.end('unauthorized'); }
+      const type = q.get('type') || 'orders';
+      const days = Math.min(parseInt(q.get('days') || '7', 10) || 7, 120);
+      const conv = q.get('conv') || 'CRM-PURCHASE';
+      const cname = q.get('client');
+      const client = cname ? cfg.clients.find(c => c.name === cname) : cfg.clients[0];
+      if (!client) { res.writeHead(400); return res.end('no client configured'); }
+      const token = await S.getAccessToken(client);
+      const data = await doPull(client, token, type, days);
+      const noColon = function (t) { return String(t).replace(/([+-]\d\d):(\d\d)$/, '$1$2'); }; // Google Ads wants +0530 (no colon)
+      var head, rows;
+      if (type === 'contacts') {
+        head = ['Conversion Name', 'Conversion Time', 'Email', 'Phone Number'];
+        rows = (data.rows || []).map(function (r) { return [conv, noColon(r[5]), r[0], r[2]]; });
+      } else {
+        head = ['Google Click ID', 'Conversion Name', 'Conversion Time', 'Conversion Value', 'Conversion Currency', 'Email'];
+        rows = (data.conversions || []).map(function (c) { return [c.gclid, conv, noColon(c.time), c.value, c.currency, c.email]; });
+      }
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8' });
+      return res.end(toCsv([head].concat(rows)));
+    }
     if (path === '/pipelines' && req.method === 'GET') return json(res, 200, { pipelines: await readPipelines() });
     if (path === '/pipelines/save' && req.method === 'POST') {
       const b=await readBody(req);
