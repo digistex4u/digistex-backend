@@ -62,4 +62,12 @@ async function fetchCustomers(client, token, cfg, days) {
   return paged(url, token);
 }
 
-module.exports = { getAccessToken, fetchOrders, fetchCustomers, gclidOf, toOffset };
+// Abandoned checkouts = leads who started checkout (have email/phone/gclid) but did not complete an order.
+async function fetchCheckouts(client, token, cfg, days) {
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  let url = `https://${client.shopifyStore}/admin/api/${cfg.shopifyApiVersion}/checkouts.json` +
+            `?limit=250&created_at_min=${encodeURIComponent(since)}`;
+  return paged(url, token);
+}
+
+module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, toOffset };
