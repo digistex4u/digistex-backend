@@ -56,14 +56,16 @@ function isDue(pl, now){
   return false;
 }
 function buildGadsCsv(pl, data){
+  var bare=function(t){return String(t).replace(/\s*[+-]\d\d:?\d\d$/,'');};
+  var params=['Parameters:TimeZone=Asia/Kolkata'];
   if(pl.type==='contacts'){
     var head=['Conversion Name','Conversion Time','Email','Phone Number'];
-    var rows=(data.rows||[]).map(function(r){return [pl.conv, r[5], r[0], r[2]];});
-    return toCsv([head].concat(rows));
+    var rows=(data.rows||[]).map(function(r){return [pl.conv, bare(r[5]), r[0], r[2]];});
+    return toCsv([params, head].concat(rows));
   }
   var head=['Google Click ID','Conversion Name','Conversion Time','Conversion Value','Conversion Currency','Email'];
-  var rows=(data.conversions||[]).map(function(c){return [c.gclid, pl.conv, c.time, c.value, c.currency, c.email];});
-  return toCsv([head].concat(rows));
+  var rows=(data.conversions||[]).map(function(c){return [c.gclid, pl.conv, bare(c.time), c.value, c.currency, c.email];});
+  return toCsv([params, head].concat(rows));
 }
 
 async function doPull(client, token, type, days) {
@@ -117,17 +119,19 @@ http.createServer(async (req, res) => {
       if (!client) { res.writeHead(400); return res.end('no client configured'); }
       const token = await S.getAccessToken(client);
       const data = await doPull(client, token, type, days);
-      const noColon = function (t) { return String(t).replace(/([+-]\d\d):(\d\d)$/, '$1$2'); }; // Google Ads wants +0530 (no colon)
+      // Google Ads: declare timezone once at file level, give bare timestamps (no per-row offset).
+      const bare = function (t) { return String(t).replace(/\s*[+-]\d\d:?\d\d$/, ''); };
+      const params = ['Parameters:TimeZone=Asia/Kolkata'];
       var head, rows;
       if (type === 'contacts') {
         head = ['Conversion Name', 'Conversion Time', 'Email', 'Phone Number'];
-        rows = (data.rows || []).map(function (r) { return [conv, noColon(r[5]), r[0], r[2]]; });
+        rows = (data.rows || []).map(function (r) { return [conv, bare(r[5]), r[0], r[2]]; });
       } else {
         head = ['Google Click ID', 'Conversion Name', 'Conversion Time', 'Conversion Value', 'Conversion Currency', 'Email'];
-        rows = (data.conversions || []).map(function (c) { return [c.gclid, conv, noColon(c.time), c.value, c.currency, c.email]; });
+        rows = (data.conversions || []).map(function (c) { return [c.gclid, conv, bare(c.time), c.value, c.currency, c.email]; });
       }
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8' });
-      return res.end(toCsv([head].concat(rows)));
+      return res.end(toCsv([params, head].concat(rows)));
     }
     if (path === '/pipelines' && req.method === 'GET') return json(res, 200, { pipelines: await readPipelines() });
     if (path === '/pipelines/save' && req.method === 'POST') {
