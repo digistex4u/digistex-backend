@@ -130,7 +130,7 @@ http.createServer(async (req, res) => {
         head = ['Google Click ID', 'Conversion Name', 'Conversion Time', 'Conversion Value', 'Conversion Currency', 'Email'];
         rows = (data.conversions || []).map(function (c) { return [c.gclid, conv, bare(c.time), c.value, c.currency, c.email]; });
       }
-      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8' });
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store, max-age=0' });
       return res.end(toCsv([params, head].concat(rows)));
     }
     if (path === '/pipelines' && req.method === 'GET') return json(res, 200, { pipelines: await readPipelines() });
