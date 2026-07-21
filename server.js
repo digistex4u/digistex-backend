@@ -103,7 +103,14 @@ async function doPull(client, token, type, days) {
     const columns = ['Google Click ID','Email','Phone','Created (IST)','Value','Currency'];
     const rows = []; const conversions = [];
     for (const c of leads) {
-      const g = S.gclidOf(c) || '';
+      let g = S.gclidOf(c) || '';
+      if (!g && (c.email || c.phone || (c.billing_address||{}).phone)) {
+        try {
+          const lr = await fetch('https://pramogh-crm-hub.vercel.app/api/gclid-lookup?order_email=' + encodeURIComponent(c.email||'') + '&order_phone=' + encodeURIComponent(c.phone||(c.billing_address||{}).phone||'') + (process.env.EXPORT_KEY ? '&key=' + encodeURIComponent(process.env.EXPORT_KEY) : ''));
+          const ld = await lr.json();
+          if (ld.gclid) g = ld.gclid;
+        } catch(e) {}
+      }
       const ba = c.billing_address || c.shipping_address || {};
       const phone = c.phone || ba.phone || '';
       rows.push([g, c.email||'', phone, ist(c.created_at), c.total_price, c.currency]);
@@ -116,7 +123,14 @@ async function doPull(client, token, type, days) {
   const columns = ['Order','Email','Created (IST)','Value','Currency','Payment','gclid'];
   const rows = []; const conversions = [];
   for (const o of orders) {
-    const g = S.gclidOf(o);
+    let g = S.gclidOf(o);
+    if (!g && (o.email || (o.billing_address||{}).phone)) {
+      try {
+        const lr = await fetch('https://pramogh-crm-hub.vercel.app/api/gclid-lookup?order_email=' + encodeURIComponent(o.email||'') + '&order_phone=' + encodeURIComponent(o.phone||(o.billing_address||{}).phone||'') + (process.env.EXPORT_KEY ? '&key=' + encodeURIComponent(process.env.EXPORT_KEY) : ''));
+        const ld = await lr.json();
+        if (ld.gclid) g = ld.gclid;
+      } catch(e) {}
+    }
     rows.push([o.name||'', o.email||'', ist(o.created_at), o.total_price, o.currency, o.financial_status||'', g||'']);
     if (g) conversions.push({ gclid:g, time:ist(o.created_at), value:o.total_price, currency:o.currency, email:o.email||'' });
   }
