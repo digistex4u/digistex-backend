@@ -1,15 +1,23 @@
 'use strict';
 const _tokenCache = {};
 
+// fetch with an AbortController timeout so a hung upstream can't stall the whole serverless function
+async function fetchT(url, opts, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, ms || 12000);
+  try { return await fetch(url, Object.assign({}, opts || {}, { signal: ctrl.signal })); }
+  finally { clearTimeout(timer); }
+}
+
 async function getAccessToken(client) {
   const now = Date.now();
   const cached = _tokenCache[client.shopifyStore];
   if (cached && cached.exp > now + 60000) return cached.token;
-  const res = await fetch(`https://${client.shopifyStore}/admin/oauth/access_token`, {
+  const res = await fetchT(`https://${client.shopifyStore}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'client_credentials', client_id: client.shopifyClientId, client_secret: client.shopifyClientSecret })
-  });
+  }, 12000);
   const text = await res.text();
   if (!res.ok) throw new Error(`Shopify token ${res.status}: ${text.slice(0, 200)}`);
   const data = JSON.parse(text);
@@ -36,7 +44,7 @@ function toOffset(iso, offset) {
 async function paged(url, token) {
   const out = [];
   while (url) {
-    const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+    const res = await fetchT(url, { headers: { 'X-Shopify-Access-Token': token } }, 12000);
     if (!res.ok) { const b = await res.text(); throw new Error(`Shopify ${res.status}: ${b.slice(0, 200)}`); }
     const data = await res.json();
     const key = Object.keys(data)[0];
@@ -70,4 +78,4 @@ async function fetchCheckouts(client, token, cfg, days) {
   return paged(url, token);
 }
 
-module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, toOffset };
+module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, toOffset, fetchT };
