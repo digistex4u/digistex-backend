@@ -145,9 +145,24 @@ async function mapLimit(items, limit, fn){
   await Promise.all(workers);
   return ret;
 }
-async function lookupGclid(email, phone){
+// Fallback click-ID lookup in the CRM that tracks THIS store's visitors (by order email/phone).
+// Each store must use its own CRM: looking a HOQ order up in Pramogh's CRM can attach a click ID from another
+// Google account (rejected by Google) or miss entirely. Stores without a CRM tracker get no fallback.
+// A client can override with "gclidLookupUrl" in CLIENTS_JSON.
+const CRM_LOOKUP = {
+  pramogh: 'https://pramogh-crm-hub.vercel.app/api/gclid-lookup?',
+  ratnalogy: 'https://node.digistex4u.com/api/gclid-lookup?b=ratna&',
+  hoq: 'https://node.digistex4u.com/api/gclid-lookup?b=hoq&',
+};
+function lookupBase(client){
+  if (client && client.gclidLookupUrl) return client.gclidLookupUrl + (client.gclidLookupUrl.indexOf('?') > -1 ? '&' : '?');
+  return CRM_LOOKUP[String((client && client.name) || '').toLowerCase()] || '';
+}
+async function lookupGclid(client, email, phone){
+  const base = lookupBase(client);
+  if (!base) return '';
   try {
-    const url = 'https://pramogh-crm-hub.vercel.app/api/gclid-lookup?order_email=' + encodeURIComponent(email||'') + '&order_phone=' + encodeURIComponent(phone||'') + (process.env.EXPORT_KEY ? '&key=' + encodeURIComponent(process.env.EXPORT_KEY) : '');
+    const url = base + 'order_email=' + encodeURIComponent(email||'') + '&order_phone=' + encodeURIComponent(phone||'') + (process.env.EXPORT_KEY ? '&key=' + encodeURIComponent(process.env.EXPORT_KEY) : '');
     const lr = await fetchT(url, {}, LOOKUP_TIMEOUT_MS);
     const ld = await lr.json();
     return (ld && ld.gclid) ? ld.gclid : '';
@@ -214,7 +229,7 @@ async function doPull(client, token, type, days) {
     if (lookupsUsed >= MAX_LOOKUPS) return '';
     if ((Date.now() - started) > LOOKUP_DEADLINE_MS) return '';
     lookupsUsed++;
-    return await lookupGclid(email, phone);
+    return await lookupGclid(client, email, phone);
   };
 
   if (type === 'contacts') {
