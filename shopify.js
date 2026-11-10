@@ -30,7 +30,35 @@ function noteAttr(order, name) {
   const hit = arr.find(a => a && String(a.name).toLowerCase() === name.toLowerCase() && a.value);
   return hit ? String(hit.value).trim() : null;
 }
-function gclidOf(order) { return noteAttr(order, 'gclid') || noteAttr(order, '_gclid'); }
+// Google click IDs on an order/checkout. Order of trust:
+//   1. note_attributes written by the theme snippet (gclid / gbraid / wbraid, with or without a leading "_")
+//   2. the order's landing_site query string (Shopify records the first page of the session; often empty
+//      on Shopflo orders, so it is a fallback, never the main source)
+// gbraid / wbraid are what Google sends instead of a gclid on iOS (app and web) traffic, so an order can
+// legitimately carry one of those and no gclid.
+const CLICK_KEYS = ['gclid', 'gbraid', 'wbraid'];
+function fromLandingSite(order, key) {
+  const ls = order && order.landing_site;
+  if (!ls) return null;
+  const m = String(ls).match(new RegExp('[?&#]' + key + '=([^&#\\s]+)', 'i'));
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]).trim() || null; } catch (e) { return m[1].trim() || null; }
+}
+function clickIdsOf(order) {
+  const out = { gclid: null, gbraid: null, wbraid: null, source: null };
+  CLICK_KEYS.forEach(function (k) {
+    const v = noteAttr(order, k) || noteAttr(order, '_' + k);
+    if (v) { out[k] = v; out.source = out.source || 'note_attributes'; }
+  });
+  if (!out.gclid && !out.gbraid && !out.wbraid) {
+    CLICK_KEYS.forEach(function (k) {
+      const v = fromLandingSite(order, k);
+      if (v) { out[k] = v; out.source = out.source || 'landing_site'; }
+    });
+  }
+  return out;
+}
+function gclidOf(order) { return clickIdsOf(order).gclid; }
 function nextLink(h) { if (!h) return null; const m = h.match(/<([^>]+)>;\s*rel="next"/); return m ? m[1] : null; }
 
 function toOffset(iso, offset) {
@@ -59,7 +87,7 @@ async function fetchOrders(client, token, cfg, days, financialStatus) {
   let url = `https://${client.shopifyStore}/admin/api/${cfg.shopifyApiVersion}/orders.json` +
             `?status=any&limit=250&created_at_min=${encodeURIComponent(since)}` +
             (financialStatus ? `&financial_status=${financialStatus}` : '') +
-            `&fields=name,email,created_at,total_price,currency,financial_status,note_attributes`;
+            `&fields=name,email,phone,billing_address,created_at,total_price,currency,financial_status,note_attributes,landing_site`;
   return paged(url, token);
 }
 
@@ -78,4 +106,4 @@ async function fetchCheckouts(client, token, cfg, days) {
   return paged(url, token);
 }
 
-module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, toOffset, fetchT };
+module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, clickIdsOf, toOffset, fetchT };

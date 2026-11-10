@@ -1,0 +1,102 @@
+{%- comment -%}
+  Digistex click-ID capture (gclid / gbraid / wbraid) for Shopify + Shopflo.
+  Install: Online Store > Themes > Edit code > Snippets > Add "dgx-click-ids",
+  paste this file, then in layout/theme.liquid add {% render 'dgx-click-ids' %}
+  just before </head>. Full steps: docs/heatronics-click-id-capture.md in digistex-backend.
+
+  What it does
+  - Reads gclid / gbraid / wbraid from the landing URL and keeps the latest one for 90 days
+    in a first-party cookie (_dgx_cid) and localStorage (survives either being cleared).
+  - On every page load, and again before checkout, writes them to the Shopify cart attributes
+    (gclid, gbraid, wbraid, dgx_click_ts). Shopify and Shopflo copy cart attributes into the
+    order's note_attributes, which is where digistex-backend reads them for the Google Ads upload.
+  - No personal data. Never blocks the page; every network call fails silently.
+{%- endcomment -%}
+<script>
+(function () {
+  if (window.__dgxClickIds) return; window.__dgxClickIds = 1;
+  var KEYS = ['gclid', 'gbraid', 'wbraid'];
+  var NAME = '_dgx_cid', TTL = 90 * 864e5;
+
+  function readStore() {
+    var raw = null;
+    try { var m = document.cookie.match(/(?:^|;\s*)_dgx_cid=([^;]*)/); if (m) raw = decodeURIComponent(m[1]); } catch (e) {}
+    if (!raw) { try { raw = localStorage.getItem(NAME); } catch (e) {} }
+    try { var o = raw ? JSON.parse(raw) : null; if (o && o.ts && (Date.now() - o.ts) < TTL) return o; } catch (e) {}
+    return null;
+  }
+  function writeStore(o) {
+    var v = JSON.stringify(o);
+    try {
+      var exp = new Date(o.ts + TTL).toUTCString();
+      document.cookie = NAME + '=' + encodeURIComponent(v) + ';expires=' + exp + ';path=/;SameSite=Lax' + (location.protocol === 'https:' ? ';Secure' : '');
+    } catch (e) {}
+    try { localStorage.setItem(NAME, v); } catch (e) {}
+  }
+
+  // 1. Capture from the landing URL. A new Google click replaces the old one (Google credits the last click).
+  var qs = new URLSearchParams(location.search), fresh = null;
+  KEYS.forEach(function (k) { var v = qs.get(k); if (v) { fresh = fresh || { ts: Date.now() }; fresh[k] = v.trim().slice(0, 255); } });
+  var ids = fresh || readStore();
+  if (fresh) writeStore(fresh);
+  if (!ids) return; // not a Google visitor, nothing to do
+
+  var attrs = { gclid: ids.gclid || '', gbraid: ids.gbraid || '', wbraid: ids.wbraid || '', dgx_click_ts: new Date(ids.ts).toISOString() };
+  var root = (window.Shopify && Shopify.routes && Shopify.routes.root) || '/';
+
+  function sameAs(cartAttrs) {
+    cartAttrs = cartAttrs || {};
+    return KEYS.every(function (k) { return (cartAttrs[k] || '') === attrs[k]; });
+  }
+  // 2. Write to the cart (creates the cart if there is none yet). Skips the POST when already in place.
+  var inflight = null;
+  function sync() {
+    if (inflight) return inflight;
+    inflight = fetch(root + 'cart.js', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (cart) {
+        if (sameAs(cart && cart.attributes)) return;
+        return fetch(root + 'cart/update.js', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ attributes: attrs })
+        });
+      })
+      .catch(function () {})
+      .then(function () { inflight = null; });
+    return inflight;
+  }
+  sync();
+
+  // 3. Re-sync after anything that may create a new cart (add to cart / cart clear), incl. Shopflo buy-now flows.
+  try {
+    var _fetch = window.fetch;
+    window.fetch = function (input) {
+      var p = _fetch.apply(this, arguments);
+      try {
+        var u = typeof input === 'string' ? input : (input && input.url) || '';
+        if (/\/cart\/(add|clear)(\.js)?/.test(u)) p.then(function () { setTimeout(sync, 300); }).catch(function () {});
+      } catch (e) {}
+      return p;
+    };
+  } catch (e) {}
+
+  // 4. Before checkout (native or Shopflo button): make sure the attributes are on the cart.
+  //    Runs in the capture phase so it fires before Shopflo's own handler. sendBeacon survives the redirect.
+  var CHECKOUT_SEL = 'button[name="checkout"], input[name="checkout"], a[href*="/checkout"], form[action*="/checkout"] [type="submit"], [data-shopflo-checkout], .shopflo-btn, [class*="shopflo"], [id*="shopflo"]';
+  function beacon() {
+    try {
+      var body = new URLSearchParams();
+      Object.keys(attrs).forEach(function (k) { body.append('attributes[' + k + ']', attrs[k]); });
+      if (navigator.sendBeacon) navigator.sendBeacon(root + 'cart/update.js', body);
+      else sync();
+    } catch (e) {}
+  }
+  document.addEventListener('click', function (e) {
+    try { if (e.target && e.target.closest && e.target.closest(CHECKOUT_SEL)) beacon(); } catch (err) {}
+  }, true);
+  document.addEventListener('submit', function (e) {
+    try { var a = (e.target && e.target.getAttribute('action')) || ''; if (/\/checkout|\/cart/.test(a)) beacon(); } catch (err) {}
+  }, true);
+})();
+</script>

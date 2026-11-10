@@ -280,8 +280,12 @@ http.createServer(async (req, res) => {
         try {
           const t=await S.getAccessToken(c);
           const o=await S.fetchOrders(c,t,cfg,7,null);
-          const gc=o.filter(S.gclidOf).length;
-          return { client:c.name, store:c.shopifyStore, tokenMinted:true, orders:o.length, gclidRows:gc, coverage: o.length ? Math.round(gc*100/o.length) : 0 };
+          const ids=o.map(S.clickIdsOf);
+          const gc=ids.filter(x=>x.gclid).length;
+          // gbraid/wbraid-only orders (iOS) are counted separately: they are real Google clicks but are not in the gclid upload yet.
+          const braidOnly=ids.filter(x=>!x.gclid&&(x.gbraid||x.wbraid)).length;
+          const fromLanding=ids.filter(x=>x.gclid&&x.source==='landing_site').length;
+          return { client:c.name, store:c.shopifyStore, tokenMinted:true, orders:o.length, gclidRows:gc, coverage: o.length ? Math.round(gc*100/o.length) : 0, braidOnlyRows:braidOnly, gclidFromLandingSite:fromLanding };
         }
         catch(e){ return { client:c.name, store:c.shopifyStore, tokenMinted:false, error:e.message }; }
       });
