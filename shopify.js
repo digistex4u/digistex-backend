@@ -40,17 +40,25 @@ function noteAttr(order, name) {
 }
 // Google click IDs on an order/checkout. Order of trust:
 //   1. note_attributes written by the theme snippet (gclid / gbraid / wbraid, with or without a leading "_")
-//   2. the order's landing_site query string (Shopify records the first page of the session; often empty
+//   2. Shopflo's landing_page_url note attribute (the URL the shopper landed on, as Shopflo saw it)
+//   3. the order's landing_site query string (Shopify records the first page of the session; often empty
 //      on Shopflo orders, so it is a fallback, never the main source)
 // gbraid / wbraid are what Google sends instead of a gclid on iOS (app and web) traffic, so an order can
 // legitimately carry one of those and no gclid.
 const CLICK_KEYS = ['gclid', 'gbraid', 'wbraid'];
-function fromLandingSite(order, key) {
-  const ls = order && order.landing_site;
-  if (!ls) return null;
-  const m = String(ls).match(new RegExp('[?&#]' + key + '=([^&#\\s]+)', 'i'));
+function fromUrl(url, key) {
+  if (!url) return null;
+  const m = String(url).match(new RegExp('[?&#]' + key + '=([^&#\\s]+)', 'i'));
   if (!m) return null;
   try { return decodeURIComponent(m[1]).trim() || null; } catch (e) { return m[1].trim() || null; }
+}
+function fromLandingSite(order, key) { return fromUrl(order && order.landing_site, key); }
+// Shopflo writes the session's first URL to the order as a note attribute (landing_page_url). It is a
+// separate field from Shopify's own landing_site and was ignored until now (gap 3 in job 61).
+const SHOPFLO_LANDING_KEYS = ['landing_page_url', '_landing_page_url', 'landing_page', 'shopflo_landing_page_url'];
+function shopfloLanding(order) {
+  for (const k of SHOPFLO_LANDING_KEYS) { const v = noteAttr(order, k); if (v) return v; }
+  return null;
 }
 function clickIdsOf(order) {
   const out = { gclid: null, gbraid: null, wbraid: null, source: null };
@@ -58,6 +66,13 @@ function clickIdsOf(order) {
     const v = noteAttr(order, k) || noteAttr(order, '_' + k);
     if (v) { out[k] = v; out.source = out.source || 'note_attributes'; }
   });
+  if (!out.gclid && !out.gbraid && !out.wbraid) {
+    const lp = shopfloLanding(order);
+    CLICK_KEYS.forEach(function (k) {
+      const v = fromUrl(lp, k);
+      if (v) { out[k] = v; out.source = out.source || 'landing_page_url'; }
+    });
+  }
   if (!out.gclid && !out.gbraid && !out.wbraid) {
     CLICK_KEYS.forEach(function (k) {
       const v = fromLandingSite(order, k);
@@ -95,7 +110,7 @@ async function fetchOrders(client, token, cfg, days, financialStatus) {
   let url = `https://${client.shopifyStore}/admin/api/${cfg.shopifyApiVersion}/orders.json` +
             `?status=any&limit=250&created_at_min=${encodeURIComponent(since)}` +
             (financialStatus ? `&financial_status=${financialStatus}` : '') +
-            `&fields=name,email,phone,billing_address,created_at,total_price,currency,financial_status,note_attributes,landing_site`;
+            `&fields=id,name,email,contact_email,phone,customer,billing_address,shipping_address,created_at,total_price,current_total_price,currency,financial_status,cancelled_at,test,tags,discount_codes,note_attributes,landing_site`;
   return paged(url, token);
 }
 

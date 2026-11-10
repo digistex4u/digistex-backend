@@ -79,3 +79,12 @@ installed in the Shopify admin. What the snippet does:
 
 These checks were already run against a mock store in headless Chromium: capture, cart write, no repeat POST on the next page, re-sync after a cart clear,
 the checkout beacon, a gbraid replacing a gclid, and the 90-day cookie. `npm test` covers the backend parser.
+
+## Update (job 61): Google Ads API upload
+
+The gaps above are now closed in the backend. See `docs/google-ads-api-upload.md`.
+- gbraid / wbraid orders go up through the Google Ads API (`gads.js`). The CSV is still gclid-only and is phased out store by store.
+- Heatronics has no CRM, so orders without a click ID go up with the hashed email/phone from the Shopify order (enhanced conversions for leads).
+- Shopflo's `landing_page_url` note attribute is now read as a click-ID source, after note attributes and before `landing_site`.
+- `/gads/health` replaces `/diag` coverage for the API stores. It also counts identifier-only and no-signal orders.
+- The theme snippet is unchanged. This PR doesn't touch any theme.
