@@ -278,18 +278,32 @@ http.createServer(async (req, res) => {
     if (path === '/diag' || path === '/api/diag') {
       const out = await mapLimit(cfg.clients, 4, async function(c){
         try {
-          const t=await S.getAccessToken(c);
+          const info=await S.getTokenInfo(c); const t=info.token;
           const o=await S.fetchOrders(c,t,cfg,7,null);
           const ids=o.map(S.clickIdsOf);
           const gc=ids.filter(x=>x.gclid).length;
           // gbraid/wbraid-only orders (iOS) are counted separately: they are real Google clicks but are not in the gclid upload yet.
           const braidOnly=ids.filter(x=>!x.gclid&&(x.gbraid||x.wbraid)).length;
           const fromLanding=ids.filter(x=>x.gclid&&x.source==='landing_site').length;
-          return { client:c.name, store:c.shopifyStore, tokenMinted:true, orders:o.length, gclidRows:gc, coverage: o.length ? Math.round(gc*100/o.length) : 0, braidOnlyRows:braidOnly, gclidFromLandingSite:fromLanding };
+          return { client:c.name, store:c.shopifyStore, tokenMinted:true, scope:info.scope, orders:o.length, gclidRows:gc, coverage: o.length ? Math.round(gc*100/o.length) : 0, braidOnlyRows:braidOnly, gclidFromLandingSite:fromLanding };
         }
         catch(e){ return { client:c.name, store:c.shopifyStore, tokenMinted:false, error:e.message }; }
       });
       return json(res, 200, { clientsConfigured: cfg.clients.length, clients: out });
+    }
+    // Store bridge for the Digistex cockpit. /apps: each store's public app (client) ID, no secrets.
+    // /store-token: a short-lived Admin token for one store, only with STORE_TOKEN_KEY, so app secrets never leave this project.
+    if (path === '/apps' || path === '/api/apps') return json(res, 200, { apps: cfg.clients.map(c => ({ name:c.name, store:c.shopifyStore, clientId:c.shopifyClientId || null })) });
+    if (path === '/store-token' || path === '/api/store-token') {
+      const want = process.env.STORE_TOKEN_KEY || '';
+      const got = String(req.headers.authorization || '').replace(/^Bearer /, '');
+      const ok = want.length >= 32 && got.length === want.length && require('crypto').timingSafeEqual(Buffer.from(got), Buffer.from(want));
+      if (!ok) return json(res, 401, { error: 'unauthorized' });
+      const name = String(q.get('client') || '').toLowerCase();
+      const client = cfg.clients.find(c => String(c.name).toLowerCase() === name || c.shopifyStore === name);
+      if (!client) return json(res, 404, { error: 'unknown client' });
+      const info = await S.getTokenInfo(client);
+      return json(res, 200, { store: client.shopifyStore, token: info.token, scope: info.scope, expires_in: Math.max(0, Math.floor((info.exp - Date.now()) / 1000)) });
     }
     if (path === '/pull' || path === '/api/pull') {
       const type=q.get('type')||'orders'; const days=Math.min(parseInt(q.get('days')||'7',10)||7,120);

@@ -13,6 +13,14 @@ async function getAccessToken(client) {
   const now = Date.now();
   const cached = _tokenCache[client.shopifyStore];
   if (cached && cached.exp > now + 60000) return cached.token;
+  return (await getTokenInfo(client)).token;
+}
+
+// Token plus the permissions Shopify granted it (scope), for the store-token bridge and /diag.
+async function getTokenInfo(client) {
+  const now = Date.now();
+  const cached = _tokenCache[client.shopifyStore];
+  if (cached && cached.exp > now + 60000 && cached.scope !== undefined) return cached;
   const res = await fetchT(`https://${client.shopifyStore}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -21,8 +29,8 @@ async function getAccessToken(client) {
   const text = await res.text();
   if (!res.ok) throw new Error(`Shopify token ${res.status}: ${text.slice(0, 200)}`);
   const data = JSON.parse(text);
-  _tokenCache[client.shopifyStore] = { token: data.access_token, exp: now + ((data.expires_in || 86399) * 1000) };
-  return data.access_token;
+  _tokenCache[client.shopifyStore] = { token: data.access_token, scope: data.scope || '', exp: now + ((data.expires_in || 86399) * 1000) };
+  return _tokenCache[client.shopifyStore];
 }
 
 function noteAttr(order, name) {
@@ -106,4 +114,4 @@ async function fetchCheckouts(client, token, cfg, days) {
   return paged(url, token);
 }
 
-module.exports = { getAccessToken, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, clickIdsOf, toOffset, fetchT };
+module.exports = { getAccessToken, getTokenInfo, fetchOrders, fetchCustomers, fetchCheckouts, gclidOf, clickIdsOf, toOffset, fetchT };
